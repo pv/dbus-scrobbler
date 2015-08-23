@@ -1,0 +1,119 @@
+=encoding utf8
+
+=pod
+
+=head1 NAME
+
+dbus-scrobbler - scrobble from an MPRIS-compliant media player's DBus interface
+
+=head1 SYNOPSIS
+
+  ./dbus-scrobbler
+  Found a running Banshee, connecting…
+  Now listening…
+  [2015-08-23 10:35:51] Detected track change.
+  You need to visit:
+  http://www.last.fm/api/auth/?api_key=dfab9b1c7357c55028c84b9a8fb68880&token=b4fb0bd84f55ce143885a31756cc859c
+  Press Enter when you have done so and authorized this app…
+  [2015-08-23 10:36:18] Successfully updated nowplaying: Pet Shop Boys - Left to My Own Devices.
+  [2015-08-23 10:36:18] Detected track change.
+  [2015-08-23 10:36:18] Successfully scrobbled: Pet Shop Boys - Left to My Own Devices.
+  [2015-08-23 10:40:40] Detected track change.
+  [2015-08-23 10:40:41] Successfully updated nowplaying: Pet Shop Boys - Where the Streets Have No Name.
+
+=head1 DESCRIPTION
+
+I noticed that scrobbling from my media player (Banshee) broke a few weeks ago.
+Banshee is written in Mono, which I have no idea about, and I'm pretty sure the
+problem is with Banshee, not Last.fm (although Last.fm B<did> change their site
+around).
+
+Many modern media players such as Banshee, VLC, Audacity, XMMS2, Spotify, … now
+support a thing called the Multimedia Player Remote Interfacing Specification
+(MPRIS). It's a DBus interface so that third-party programs can control and
+inspect the media players in some documented way. I decided to use it to
+scrobble from. That's what this does.
+
+B<dbus-scrobbler>:
+
+=over 4
+
+=item * Looks on your user session's DBus for an existing Banshee process to listen to. If it doesn't find one then it waits for one to appear.
+
+=item * Asks for authorization with Last.fm the first time this is necessary, asking the user to complete the authorization of the application in their web browser if needed, and caches this session key forever.
+
+=item * Updates the currently playing track on each track change and then scrobbles the previous track.
+
+=back
+
+=head1 SESSION KEY AND AUTHORIZATION
+
+Updating the currently-playing track and scrobbling a track both require
+authorization with Last.fm's API. The first time that B<dbus-scrobbler> is run
+and has occasion to send an update to Last.fm, it will look for the
+B<File::HomeDir::my_home()/.config/dbus-scrobbler/sessionkey> file.
+
+If this doesn't exist or is empty then a URL for the user to authorize the app
+will be printed, and (assuming successful authorization then takes place), the
+resulting session key will be stored in the file. As this session key is valid
+for an infinite period of time and allows modification of your Last.fm account
+you should keep it safe.
+
+=head1 SEE ALSO
+
+L<Net::LastFMAPI>, from which all of the code for interacting with Last.fm's
+API was stolen.
+
+=head1 BUGS
+
+Some of the most egregious shortcomings:
+
+=over 4
+
+=item * Hard-coded to support Banshee.
+
+Multiple media players support MPRIS, but I don't know enough about DBus yet to
+work out how to wait for them all to appear on the bus, so at the moment this
+just looks for Banshee. It should be very very simple to alter it to work with
+another player though.
+
+=item * Should run as a daemon.
+
+It really shouldn't be foreground on the terminal. It should be automatically
+launched by the user's login process.
+
+=item * Should have proper logging.
+
+Instead of a bunch of crappy prints this should really have logging with
+multiple priorities, possibly to syslog, and at least with an option to run in
+foreground and log to stderr.
+
+=item * DBus stuff could no doubt be better.
+
+I've knocked this together in one evening because my scrobbling was broken. I
+didn't know anything about DBus before that, other than that it's a message
+bus. So the chances are I have done some really stupid things.
+
+=item * Should use own API credentials.
+
+Last.fm's API key application page was broken when I was writing this, so I
+just copied Net::LastFMAPI's credentials. That works fine but I should really
+use proper credentials once the page works again.
+
+=back
+
+Please give feedback or issues at the GitHub site,
+L<https://github.com/grifferz/dbus-scrobbler>.
+
+=head1 AUTHOR
+
+Andy Smith <andy-dbus-scrobbler@strugglers.net>
+
+=head1 COPYRIGHT
+
+Copyright © 2015 Andy Smith. All rights reserved. This application is free
+software. It may be used, redistributed and/or modified under the terms of the
+Perl Artistic License. Please see the LICENSE file for more details.
+
+Most of the Last.fm API code copied from Steev Eeriumn's Net::LastFMAPI, under
+the terms of the Perl Artistic License.

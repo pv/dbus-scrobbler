@@ -1,0 +1,560 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use utf8;
+
+use Net::DBus;
+use Net::DBus::Reactor;
+use LWP::UserAgent;
+use Digest::MD5 'md5_hex';
+use JSON::XS;
+use URI;
+use File::Slurp;
+use File::Path qw/make_path/;
+use File::HomeDir qw/my_home/;
+use POSIX qw/strftime/;
+
+use Data::Dumper;
+
+my $VERSION = '0.01_01';
+
+my $lastfm_session_key;
+my $sk_savefile = my_home() . '/.config/dbus-scrobbler/sessionkey';
+
+my @_queue;
+
+# Using Net::LastFMAPI's creds at the moment because
+# http://www.last.fm/api/account/create isn't working right now.
+my $lastfm_api_key = 'dfab9b1c7357c55028c84b9a8fb68880';
+my $lastfm_secret  = 'd004c86dcfa8ef4c3977b04f558535f2';
+my $lastfm_url     = 'http://ws.audioscrobbler.com/2.0/';
+
+my $ua = new LWP::UserAgent(agent => "dbus-scrobbler/$VERSION");
+
+my $prev_update      = '';
+my $prev_update_time = 0;
+
+my $bus = Net::DBus->session;
+my $player;
+
+eval { $player = $bus->get_service('org.mpris.MediaPlayer2.banshee'); };
+
+if ($@) {
+    if ($@ =~ /org\.mpris\.MediaPlayer2\..*was not provided/) {
+        print "I can't see a running Banshee so I'm going to wait…\n";
+
+        my $session     = $bus->get_service('org.freedesktop.DBus');
+        my $session_obj = $session->get_object('/org/freedesktop/DBus');
+
+        $session_obj->connect_to_signal('NameOwnerChanged', \&handle_nameownerchanged);
+    } else {
+        die $@;
+    }
+} else {
+    print "Found a running Banshee, connecting…\n";
+    setup_listener();
+}
+
+my $reactor = Net::DBus::Reactor->main();
+$reactor->run;
+
+exit 0;
+
+sub load_save_sessionkey {
+    my $key = shift;
+
+    if (defined $key) {
+        # Set a restrictive umask when (potentially) creating this file as
+        # contents are sensitive.
+        my $old_umask = umask;
+        umask(0077);
+        write_file($sk_savefile, $key);
+        umask($old_umask);
+    } else {
+        $key = eval { read_file($sk_savefile) };
+    }
+
+    $lastfm_session_key = $key;
+}
+
+sub handle_nameownerchanged {
+    my ($name, $old_owner, $new_owner) = @_;
+
+    return unless ($name =~ /\.Banshee$/);
+    return unless ($new_owner ne '');
+
+    # XXX: Horrendous! But I don't know how to wait for a name to be ready for
+    # listening to.
+    sleep 2;
+
+    eval {
+        $player = $bus->get_service('org.mpris.MediaPlayer2.banshee');
+    };
+
+    if ($@) {
+        print "Doesn't look like that was a supported player: $@\n";
+        print Dumper @_;
+    } else {
+        print "A new copy of Banshee seems to be running, connecting…\n";
+    }
+
+    setup_listener();
+}
+
+sub setup_listener {
+    my $obj = $player->get_object('/org/mpris/MediaPlayer2',
+        'org.freedesktop.DBus.Properties');
+    $obj->connect_to_signal('PropertiesChanged', \&handle_propchange);
+    print "Now listening…\n";
+}
+
+sub lastfm {
+    my ($method, @params) = @_;
+    $method = lc($method);
+
+    my %params;
+    my $i = 0;
+    while (my $p = shift @params) {
+        if (ref $p eq "HASH") {
+            while (my ($k, $v) = each %{ $p }) {
+                $params{$k . '[' . $i .']'} = $v;
+            }
+            $i++;
+        } else {
+            $params{$p} = shift @params;
+        }
+    }
+
+    $params{method}  = $method;
+    $params{api_key} = $lastfm_api_key;
+    $params{format}  = 'json' unless $params{format};
+
+    delete $params{format} if $params{format} && $params{format} eq "xml";
+
+    lastfm_sessionise(\%params);
+    lastfm_sign(\%params);
+
+    my $res;
+
+    # All the auth.* methods are GET whereas all the track.* methods are POST.
+    if ($params{method} =~ /^track\./) {
+        $res = $ua->post($lastfm_url, Content => \%params);
+    } else {
+        my $uri = URI->new($lastfm_url);
+        $uri->query_form(%params);
+        $res = $ua->get($uri);
+    }
+
+    $params{format} ||= "xml";
+
+    my $content = $res->decoded_content;
+
+    print "Last.fm contains faulty data for a piece of data you requested"
+    . " and is unable to return a useful reply. Will be treated as an"
+    . " empty reply." if ($content eq qq(""\n));
+
+    my $decoded_json = sub { $content = decode_json($content); };
+
+    if (not $res->is_success
+            or ($params{format} eq 'json' and exists $decoded_json->()->{error})
+            or ($params{format} eq 'xml' and $content !~ /<lfm status="ok">/)) {
+        if ($res->is_success) {
+            # Successful HTTP request but there was some problem with it.
+            if ($res->decoded_content =~ /Invalid session key/) {
+                print "Auth problem?\n";
+            }
+        }
+
+        $content = Dumper($content);
+
+        print join("\n",
+            "Something went wrong:",
+            "HTTP status: " . $res->status_line,
+            "",
+            $content,
+            "",
+        );
+    }
+
+    return $content;
+}
+
+sub lastfm_sessionise {
+    my $params = shift;
+
+    # Only do this if auth requested or required by method.
+    unless ($params->{method} =~ /^track\./ or delete $params->{auth}) {
+        return;
+    }
+
+    $params->{sk} = lastfm_get_session_key();
+}
+
+sub lastfm_get_session_key {
+    # Try to load session key from the savefile.
+    if (not defined $lastfm_session_key) {
+        load_save_sessionkey();
+    }
+
+    # If that didn't work, request a new one. The user will need to visit a URL
+    # and approve the application.
+    if (not defined $lastfm_session_key) {
+        my $key = lastfm_request_session();
+
+        if (not defined $key) {
+            print "Failed to get a Last.fm session:\n$@";
+            return undef;
+        }
+
+        load_save_sessionkey($key);
+    }
+
+    return $lastfm_session_key;
+}
+
+sub lastfm_request_session {
+    my $res = lastfm("auth.gettoken", format => "xml");
+
+    my $token;
+
+    if ($res =~ m{<token>(.+)</token>}) {
+        $token = $1;
+    } else {
+        print "Auth token not found: $res\n";
+        return undef;
+    }
+
+    print "You need to visit:\n";
+    print 'http://www.last.fm/api/auth/?api_key=' . $lastfm_api_key
+        . '&token=' . $token . "\n";
+    print "Press Enter when you have done so and authorized this app…";
+    <STDIN>;
+
+    my $sess = lastfm("auth.getSession", token => $token, format => "xml");
+
+    my ($username) = $sess =~ m{<name>(.+)</name>};
+    my ($key) = $sess =~ m{<key>(.+)</key>};
+
+    return $key;
+}
+
+sub lastfm_sign {
+    my $params = shift;
+
+    # Only do this for signed methods.
+    return unless ($params->{method} =~ /^(auth|track)\./);
+
+    # Sort hash keys by alpha, remove any "format" or "callback" parameters,
+    # and then stuff it into a scalar.
+    my $jumble = join '',
+        map { $_ => $params->{$_} }
+            grep { not ($_ eq 'format' or $_ eq 'callback') }
+            sort keys %{ $params };
+
+#    print "Jumble: $jumble\n";
+#    print "Secret: $lastfm_secret\n";
+
+    # Append our API secret and then hash that.
+    my $hash = md5_hex($jumble . $lastfm_secret);
+
+#    print "Hash: $hash\n";
+
+    $params->{api_sig} = $hash;
+}
+
+sub handle_propchange {
+    my ($self, $args) = @_;
+
+    # Send queued scrobbles if any.
+    dequeue_scrobbles();
+
+    # Only care if track metadata is one of the things that has changed.
+    if (not exists $args->{Metadata}) {
+#        print '[' . strftime("%F %T", localtime) . "] Update without metadata:\n";
+#        print Dumper($args), "\n";
+        return;
+    }
+
+    print '[' . strftime("%F %T", localtime) . "] Detected track change.\n";
+
+    my $metadata = $args->{Metadata};
+
+    my $now = strftime("%s", gmtime);
+
+#    print Dumper($metadata), "\n";
+
+    if (not exists $metadata->{'mpris:length'}) {
+        print '[' . strftime("%F %T", localtime)
+            . "] Track has no length so I can't scrobble it.\n";
+        return;
+    }
+
+    # Length is in microseconds.
+    $metadata->{length_secs} = int($metadata->{'mpris:length'} / 1_000_000);
+
+    if ($metadata->{length_secs} <= 30) {
+        print '[' . strftime("%F %T", localtime)
+            . '] Track length ' . $metadata->{length_secs}
+            . "s <= 30 so not scrobbling.\n";
+        return;
+    }
+
+    my $scrobble;
+
+    # Sanity check supplied values.
+    if (not exists $metadata->{'xesam:artist'}) {
+        print '[' . strftime("%F %T", localtime)
+            . "] Artist(s) must be supplied!\n";
+        return;
+    }
+
+    $scrobble->{artist} = join(', ', @{ $metadata->{'xesam:artist'} });
+
+    if (not exists $metadata->{'xesam:title'}) {
+        print '[' . strftime("%F %T", localtime)
+            . "] Track title must be supplied!\n";
+        return;
+    }
+
+    $scrobble->{track} = $metadata->{'xesam:title'};
+
+    # If trackNumber is there then it must be an integer above 0.
+    if (exists $metadata->{'xesam:trackNumber'}) {
+        my $num = $metadata->{'xesam:trackNumber'};
+
+        if ($num =~ /^\d+/ and $num > 0) {
+            $scrobble->{trackNumber} = $num;
+        } else {
+            print '[' . strftime("%F %T", localtime)
+                . "] Track number must be a positive integer.\n";
+        }
+    }
+
+    # album is optional.
+    if (exists $metadata->{'xesam:album'}) {
+        $scrobble->{album} = $metadata->{'xesam:album'};
+    }
+
+    $scrobble->{duration}  = $metadata->{'length_secs'};
+    $scrobble->{timestamp} = $now;
+
+    my $res = lastfm('track.updateNowPlaying', %{ $scrobble });
+
+    if (exists $res->{nowplaying}) {
+        print '[' . strftime("%F %T", localtime)
+            . '] Successfully updated nowplaying: ' . $scrobble->{artist}
+            . ' - ' . $scrobble->{track} . ".\n";
+    }
+
+    # And now scrobble it as well.
+    #
+    # Scrobbles must only be sent after at least 50% of the track has played.
+    # Rather than use timers we'll just keep the scrobble in a queue and
+    # process it at the next track change (as that would mean this track has
+    # finished).
+    enqueue_scrobble($scrobble);
+}
+
+sub enqueue_scrobble {
+    my ($scrobble) = @_;
+
+    push(@_queue, $scrobble);
+}
+
+# If there are any scrobbles on the queue, send them all as long as there's no
+# repeats.
+sub dequeue_scrobbles {
+    return unless scalar @_queue;
+
+    my $now = strftime("%s", gmtime);
+
+    while (@_queue) {
+        my $scrobble = shift @_queue;
+
+        if (defined $prev_update
+                and $prev_update eq $scrobble->{track}) {
+            # The previous track update had the same name as this one. How long ago
+            # was it?
+            my $delta = $now - $prev_update_time;
+
+            if ($delta <= 600) {
+                print '[' . strftime("%F %T", localtime)
+                    . '] Identical track ' . $scrobble->{artist} . ' - '
+                    . $scrobble->{track} . " played only $delta secs ago, so"
+                    . " not scrobbling.\n";
+                next;
+            }
+
+            print '[' . strftime("%F %T", localtime)
+                . "] An identical track was played $delta secs ago but that's"
+                . " long enough ago to allow a new scrobble.\n";
+        }
+
+        my $res = lastfm('track.scrobble', %{ $scrobble });
+
+        if (exists $res->{scrobbles}
+                and 1 == $res->{scrobbles}->{'@attr'}->{accepted}) {
+            print '[' . strftime("%F %T", localtime)
+            . "] Successfully scrobbled: " . $scrobble->{artist} . ' - '
+            . $scrobble->{track} . ".\n";
+        } else {
+            print Dumper $res;
+        }
+
+        # Record the track name and the time of update so we can avoid sending it
+        # twice in quick succession.
+        $prev_update_time = $scrobble->{timestamp};
+        $prev_update      = $scrobble->{track};
+    }
+}
+
+__END__
+
+# Update README.pod from here with something like:
+#
+# podselect ./dbus-scrobbler > README.pod
+
+=encoding utf8
+
+=pod
+
+=head1 NAME
+
+dbus-scrobbler - scrobble from an MPRIS-compliant media player's DBus interface
+
+=head1 SYNOPSIS
+
+  ./dbus-scrobbler
+  Found a running Banshee, connecting…
+  Now listening…
+  [2015-08-23 10:35:51] Detected track change.
+  You need to visit:
+  http://www.last.fm/api/auth/?api_key=dfab9b1c7357c55028c84b9a8fb68880&token=b4fb0bd84f55ce143885a31756cc859c
+  Press Enter when you have done so and authorized this app…
+  [2015-08-23 10:36:18] Successfully updated nowplaying: Pet Shop Boys - Left to My Own Devices.
+  [2015-08-23 10:36:18] Detected track change.
+  [2015-08-23 10:36:18] Successfully scrobbled: Pet Shop Boys - Left to My Own Devices.
+  [2015-08-23 10:40:40] Detected track change.
+  [2015-08-23 10:40:41] Successfully updated nowplaying: Pet Shop Boys - Where the Streets Have No Name.
+
+=head1 DESCRIPTION
+
+I noticed that scrobbling from my media player (Banshee) broke a few weeks ago.
+Banshee is written in Mono, which I have no idea about, and I'm pretty sure the
+problem is with Banshee, not Last.fm (although Last.fm B<did> change their site
+around).
+
+Many modern media players such as Banshee, VLC, Audacity, XMMS2, Spotify, … now
+support a thing called the Multimedia Player Remote Interfacing Specification
+(MPRIS). It's a DBus interface so that third-party programs can control and
+inspect the media players in some documented way. I decided to use it to
+scrobble from. That's what this does.
+
+B<dbus-scrobbler>:
+
+=over 4
+
+=item * Looks on your user session's DBus for an existing Banshee process to listen to.
+
+If it doesn't find one then it waits for one to appear.
+
+=item * Asks for authorization with Last.fm the first time this is necessary.
+
+You'll be asked to visited the Last.fm site to authorize this application. This
+session key will be cached on the filesystem forever, so you should only need
+to do this once.
+
+=item * Updates the currently playing track on each track change and then scrobbles the previous track.
+
+=back
+
+=head1 SESSION KEY AND AUTHORIZATION
+
+Updating the currently-playing track and scrobbling a track both require
+authorization with Last.fm's API. The first time that B<dbus-scrobbler> is run
+and has occasion to send an update to Last.fm, it will look for the
+B<File::HomeDir::my_home()/.config/dbus-scrobbler/sessionkey> file.
+
+If this doesn't exist or is empty then a URL for the user to authorize the app
+will be printed, and (assuming successful authorization then takes place), the
+resulting session key will be stored in the file. As this session key is valid
+for an infinite period of time and allows modification of your Last.fm account
+you should keep it safe.
+
+If you need to force a re-authorization then you could delete the
+B<File::HomeDir::my_home()/.config/dbus-scrobbler/sessionkey> file.
+
+=head1 SEE ALSO
+
+L<Net::LastFMAPI>, from which all of the code for interacting with Last.fm's
+API was stolen.
+
+=head1 BUGS
+
+Some of the most egregious shortcomings:
+
+=over 4
+
+=item * Hard-coded to support Banshee.
+
+Multiple media players support MPRIS, but I don't know enough about DBus yet to
+work out how to wait for them all to appear on the bus, so at the moment this
+just looks for Banshee. It should be very very simple to alter it to work with
+another player though.
+
+=item * Should run as a daemon.
+
+It really shouldn't be foreground on the terminal. It should be automatically
+launched by the user's login process.
+
+=item * Should have proper logging.
+
+Instead of a bunch of crappy prints this should really have logging with
+multiple priorities, possibly to syslog, and at least with an option to run in
+foreground and log to stderr.
+
+=item * DBus stuff could no doubt be better.
+
+I've knocked this together in one evening because my scrobbling was broken. I
+didn't know anything about DBus before that, other than that it's a message
+bus. So the chances are I have done some really stupid things.
+
+=item * Should use own API credentials.
+
+Last.fm's API key application page was broken when I was writing this, so I
+just copied Net::LastFMAPI's credentials. That works fine but I should really
+use proper credentials once the page works again.
+
+=item * Does not retry on transient errors.
+
+A proper scrobbler would queue scrobbles to disk if they couldn't be submitted,
+in order to retry them later. At the moment B<dbus-scrobbler> just throws them
+away.
+
+=item * Should be kinder to Last.fm.
+
+Last.fm's API documentation says that scrobbles should only be submitted after
+50% of the track has played, or 4 minutes has elapsed, whichever comes first.
+There are a couple of situations—especially if you click around in your
+playlist a lot or keep restarting the player—in which an extra scrobble or two
+can be submitted.
+
+=back
+
+Please give feedback or issues at the GitHub site,
+L<https://github.com/grifferz/dbus-scrobbler>.
+
+=head1 AUTHOR
+
+Andy Smith <andy-dbus-scrobbler@strugglers.net>
+
+=head1 COPYRIGHT
+
+Copyright © 2015 Andy Smith. All rights reserved. This application is free
+software. It may be used, redistributed and/or modified under the terms of the
+Perl Artistic License. Please see the LICENSE file for more details.
+
+Most of the Last.fm API code copied from Steev Eeriumn's Net::LastFMAPI, under
+the terms of the Perl Artistic License.
