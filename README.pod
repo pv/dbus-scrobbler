@@ -4,7 +4,7 @@
 
 =head1 NAME
 
-dbus-scrobbler - scrobble from an MPRIS-compliant media player's DBus interface
+dbus-scrobbler - scrobble from an MPRIS-compliant media player's D-Bus interface
 
 =head1 SYNOPSIS
 
@@ -30,7 +30,7 @@ around).
 
 Many modern media players such as Banshee, VLC, Audacity, XMMS2, Spotify, … now
 support a thing called the Multimedia Player Remote Interfacing Specification
-(MPRIS). It's a DBus interface so that third-party programs can control and
+(MPRIS). It's a D-Bus interface so that third-party programs can control and
 inspect the media players in some documented way. I decided to use it to
 scrobble from. That's what this does.
 
@@ -38,9 +38,15 @@ B<dbus-scrobbler>:
 
 =over 4
 
-=item * Looks on your user session's DBus for an existing Banshee process to listen to. If it doesn't find one then it waits for one to appear.
+=item * Looks on your user session's D-Bus for an existing Banshee process to listen to.
 
-=item * Asks for authorization with Last.fm the first time this is necessary, asking the user to complete the authorization of the application in their web browser if needed, and caches this session key forever.
+If it doesn't find one then it waits for one to appear.
+
+=item * Asks for authorization with Last.fm the first time this is necessary.
+
+You'll be asked to visited the Last.fm site to authorize this application. This
+session key will be cached on the filesystem forever, so you should only need
+to do this once.
 
 =item * Updates the currently playing track on each track change and then scrobbles the previous track.
 
@@ -59,6 +65,9 @@ resulting session key will be stored in the file. As this session key is valid
 for an infinite period of time and allows modification of your Last.fm account
 you should keep it safe.
 
+If you need to force a re-authorization then you could delete the
+B<File::HomeDir::my_home()/.config/dbus-scrobbler/sessionkey> file.
+
 =head1 SEE ALSO
 
 L<Net::LastFMAPI>, from which all of the code for interacting with Last.fm's
@@ -72,10 +81,10 @@ Some of the most egregious shortcomings:
 
 =item * Hard-coded to support Banshee.
 
-Multiple media players support MPRIS, but I don't know enough about DBus yet to
-work out how to wait for them all to appear on the bus, so at the moment this
-just looks for Banshee. It should be very very simple to alter it to work with
-another player though.
+Multiple media players support MPRIS, but I don't know enough about D-Bus yet
+to work out how to wait for them all to appear on the bus, so at the moment
+this just looks for Banshee. It should be very very simple to alter it to work
+with another player though.
 
 =item * Should run as a daemon.
 
@@ -88,10 +97,10 @@ Instead of a bunch of crappy prints this should really have logging with
 multiple priorities, possibly to syslog, and at least with an option to run in
 foreground and log to stderr.
 
-=item * DBus stuff could no doubt be better.
+=item * D-Bus stuff could no doubt be better.
 
 I've knocked this together in one evening because my scrobbling was broken. I
-didn't know anything about DBus before that, other than that it's a message
+didn't know anything about D-Bus before that, other than that it's a message
 bus. So the chances are I have done some really stupid things.
 
 =item * Should use own API credentials.
@@ -99,6 +108,20 @@ bus. So the chances are I have done some really stupid things.
 Last.fm's API key application page was broken when I was writing this, so I
 just copied Net::LastFMAPI's credentials. That works fine but I should really
 use proper credentials once the page works again.
+
+=item * Does not retry on transient errors.
+
+A proper scrobbler would queue scrobbles to disk if they couldn't be submitted,
+in order to retry them later. At the moment B<dbus-scrobbler> just throws them
+away.
+
+=item * Should be kinder to Last.fm.
+
+Last.fm's API documentation says that scrobbles should only be submitted after
+50% of the track has played, or 4 minutes has elapsed, whichever comes first.
+There are a couple of situations—especially if you click around in your
+playlist a lot or keep restarting the player—in which an extra scrobble or two
+can be submitted.
 
 =back
 

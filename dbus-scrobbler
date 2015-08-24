@@ -422,7 +422,7 @@ __END__
 
 =head1 NAME
 
-dbus-scrobbler - scrobble from an MPRIS-compliant media player's DBus interface
+dbus-scrobbler - scrobble from an MPRIS-compliant media player's D-Bus interface
 
 =head1 SYNOPSIS
 
@@ -448,7 +448,7 @@ around).
 
 Many modern media players such as Banshee, VLC, Audacity, XMMS2, Spotify, … now
 support a thing called the Multimedia Player Remote Interfacing Specification
-(MPRIS). It's a DBus interface so that third-party programs can control and
+(MPRIS). It's a D-Bus interface so that third-party programs can control and
 inspect the media players in some documented way. I decided to use it to
 scrobble from. That's what this does.
 
@@ -456,7 +456,7 @@ B<dbus-scrobbler>:
 
 =over 4
 
-=item * Looks on your user session's DBus for an existing Banshee process to listen to.
+=item * Looks on your user session's D-Bus for an existing Banshee process to listen to.
 
 If it doesn't find one then it waits for one to appear.
 
@@ -499,10 +499,10 @@ Some of the most egregious shortcomings:
 
 =item * Hard-coded to support Banshee.
 
-Multiple media players support MPRIS, but I don't know enough about DBus yet to
-work out how to wait for them all to appear on the bus, so at the moment this
-just looks for Banshee. It should be very very simple to alter it to work with
-another player though.
+Multiple media players support MPRIS, but I don't know enough about D-Bus yet
+to work out how to wait for them all to appear on the bus, so at the moment
+this just looks for Banshee. It should be very very simple to alter it to work
+with another player though.
 
 =item * Should run as a daemon.
 
@@ -515,10 +515,10 @@ Instead of a bunch of crappy prints this should really have logging with
 multiple priorities, possibly to syslog, and at least with an option to run in
 foreground and log to stderr.
 
-=item * DBus stuff could no doubt be better.
+=item * D-Bus stuff could no doubt be better.
 
 I've knocked this together in one evening because my scrobbling was broken. I
-didn't know anything about DBus before that, other than that it's a message
+didn't know anything about D-Bus before that, other than that it's a message
 bus. So the chances are I have done some really stupid things.
 
 =item * Should use own API credentials.
