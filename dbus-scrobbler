@@ -507,22 +507,22 @@ reference that looks like this:
 
     {
         'Metadata' => {
-            'mpris:trackid' => '/org/bansheeproject/Banshee/Track/11334727',
-            'xesam:url' => 'file:///srv/specialbrew.localnet/srv/tank/Sounds/Songs/Andy/Lossy/Justice%20Vs%20Simian/Playlist_%20Dance/02%20-%20We%20Are%20Your%20Friends%20(Radio%20Edit).mp3',
-            'xesam:genre' => [
+            'mpris:trackid'     => '/org/bansheeproject/Banshee/Track/11334727',
+            'xesam:url'         => 'file:///srv/specialbrew.localnet/srv/tank/Sounds/Songs/Andy/Lossy/Justice%20Vs%20Simian/Playlist_%20Dance/02%20-%20We%20Are%20Your%20Friends%20(Radio%20Edit).mp3',
+            'xesam:genre'       => [
                 'Pop',
-                ],
+            ],
             'xesam:albumArtist' => [
                 'Various Artists',
-                ],
-            'xesam:album' => 'Playlist: Dance',
-            'mpris:artUrl' => 'file:///home/andy/.cache/media-art/album-8bbcd5e02f50ce9e5c74c93bdae8b372.jpg',
-            'xesam:title' => 'We Are Your Friends (Radio Edit)',
-            'mpris:length' => 159739000,
+            ],
+            'xesam:album'       => 'Playlist: Dance',
+            'mpris:artUrl'      => 'file:///home/andy/.cache/media-art/album-8bbcd5e02f50ce9e5c74c93bdae8b372.jpg',
+            'xesam:title'       => 'We Are Your Friends (Radio Edit)',
+            'mpris:length'      => 159739000,
             'xesam:trackNumber' => 2,
-            'xesam:artist' => [
+            'xesam:artist'      => [
                 'Justice Vs Simian',
-                ],
+            ],
         },
     },
 
