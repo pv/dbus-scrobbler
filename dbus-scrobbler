@@ -13,6 +13,7 @@ use JSON::XS;
 use URI;
 use File::Slurp;
 use File::Path qw/make_path/;
+use File::Basename qw/dirname/;
 use File::HomeDir qw/my_home/;
 use POSIX qw/strftime/;
 
@@ -70,6 +71,10 @@ sub load_save_sessionkey {
         # contents are sensitive.
         my $old_umask = umask;
         umask(0077);
+        my $confdir = dirname($sk_savefile);
+        if (! -d $confdir) {
+            make_path($confdir);
+        }
         write_file($sk_savefile, $key);
         umask($old_umask);
     } else {
