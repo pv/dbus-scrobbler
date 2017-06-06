@@ -9,11 +9,10 @@ dbus-scrobbler - scrobble from an MPRIS-compliant media player's D-Bus interface
 =head1 SYNOPSIS
 
   ./dbus-scrobbler
-  Found a running Banshee, connecting…
-  Now listening…
+  Now listening to org.mpris.MediaPlayer2.banshee…
   [2015-08-23 10:35:51] Detected track change.
   You need to visit:
-  http://www.last.fm/api/auth/?api_key=dfab9b1c7357c55028c84b9a8fb68880&token=b4fb0bd84f55ce143885a31756cc859c
+  https://www.last.fm/api/auth/?api_key=dfab9b1c7357c55028c84b9a8fb68880&token=b4fb0bd84f55ce143885a31756cc859c
   Press Enter when you have done so and authorized this app…
   [2015-08-23 10:36:18] Successfully updated nowplaying: Pet Shop Boys - Left to My Own Devices.
   [2015-08-23 10:36:18] Detected track change.
@@ -38,9 +37,9 @@ B<dbus-scrobbler>:
 
 =over 4
 
-=item * Looks on your user session's D-Bus for an existing Banshee process to listen to.
+=item * Looks on your user session's D-Bus for existing processes to listen to.
 
-If it doesn't find one then it waits for one to appear.
+=item * Wait for any new processes to appear.
 
 =item * Asks for authorization with Last.fm the first time this is necessary.
 
@@ -73,14 +72,13 @@ B<File::HomeDir::my_home()/.config/dbus-scrobbler/sessionkey> file.
 =head2 D-Bus Interaction
 
 B<dbus-scrobbler> initially connects to your user's session D-Bus and looks for
-the bus name B<org.mpris.Mediaplayer2.banshee>. As per the MPRIS specification,
+bus names B<org.mpris.Mediaplayer2.*>. As per the MPRIS specification,
 each media player should request a unique bus name which begins with
 B<org.mpris.MediaPlayer2>.
 
-If B<dbus-scrobbler> does not find any such bus name then it assumes that
-Banshee is not running yet. It connects to the
-B<org.freedesktop.DBus.NameOwnerChanged> signal and waits for a signal that
-indicates that B<org.mpris.Mediaplayer2.banshee> is now available.
+B<dbus-scrobbler> also connects to the
+B<org.freedesktop.DBus.NameOwnerChanged> signal to wait until a media player
+becomes available.
 
 Once available, the B</org/mpris/MediaPlayer2> object is used to connect to the
 B<org.freedesktop.DBus.Properties.PropertiesChanged> signal. This signal fires
@@ -118,13 +116,6 @@ API was stolen.
 Some of the most egregious shortcomings:
 
 =over 4
-
-=item * Hard-coded to support Banshee.
-
-Multiple media players support MPRIS, but I don't know enough about D-Bus yet
-to work out how to wait for them all to appear on the bus, so at the moment
-this just looks for Banshee. It should be very very simple to alter it to work
-with another player though.
 
 =item * Should run as a daemon.
 
