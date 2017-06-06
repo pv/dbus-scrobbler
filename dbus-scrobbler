@@ -19,7 +19,7 @@ use POSIX qw/strftime/;
 
 use Data::Dumper;
 
-my $VERSION = '0.01_01';
+my $VERSION = '0.01_02';
 
 my $lastfm_session_key;
 my $sk_savefile = my_home() . '/.config/dbus-scrobbler/sessionkey';
@@ -40,28 +40,39 @@ my $prev_update_time = 0;
 my $bus = Net::DBus->session;
 my $player;
 
-eval { $player = $bus->get_service('org.mpris.MediaPlayer2.banshee'); };
+sub connect_active_players {
+    my $bus = shift;
 
-if ($@) {
-    if ($@ =~ /org\.mpris\.MediaPlayer2\..*was not provided/) {
-        print "I can't see a running Banshee so I'm going to wait…\n";
+    # Get list of players
+    my $bus_service = $bus->get_service('org.freedesktop.DBus');
+    my $bus_info = $bus_service->get_object('/', 'org.freedesktop.DBus');
+    my @items;
 
-        my $session     = $bus->get_service('org.freedesktop.DBus');
-        my $session_obj = $session->get_object('/org/freedesktop/DBus');
-
-        $session_obj->connect_to_signal('NameOwnerChanged', \&handle_nameownerchanged);
-    } else {
-        die $@;
+    foreach my $item (@{$bus_info->ListNames}) {
+        if ($item =~ /^org\.mpris\.MediaPlayer2\./) {
+            push @items, $item;
+        }
     }
-} else {
-    print "Found a running Banshee, connecting…\n";
-    setup_listener();
+
+    foreach my $item (@items) {
+        setup_listener($item);
+    }
 }
 
+# Connect any existing players
+connect_active_players($bus);
+
+# Wait for new players
+my $session     = $bus->get_service('org.freedesktop.DBus');
+my $session_obj = $session->get_object('/org/freedesktop/DBus');
+$session_obj->connect_to_signal('NameOwnerChanged', \&handle_nameownerchanged);
+
+# Run
 my $reactor = Net::DBus::Reactor->main();
 $reactor->run;
 
 exit 0;
+
 
 sub load_save_sessionkey {
     my $key = shift;
@@ -87,7 +98,7 @@ sub load_save_sessionkey {
 sub handle_nameownerchanged {
     my ($name, $old_owner, $new_owner) = @_;
 
-    return unless ($name =~ /\.Banshee$/);
+    return unless ($name =~ /^org\.mpris\.MediaPlayer2\./);
     return unless ($new_owner ne '');
 
     # XXX: Horrendous! But I don't know how to wait for a name to be ready for
@@ -95,24 +106,24 @@ sub handle_nameownerchanged {
     sleep 2;
 
     eval {
-        $player = $bus->get_service('org.mpris.MediaPlayer2.banshee');
+        setup_listener($name);
     };
 
     if ($@) {
         print "Doesn't look like that was a supported player: $@\n";
         print Dumper @_;
     } else {
-        print "A new copy of Banshee seems to be running, connecting…\n";
+        print "A new player $name seems to be running, connected.\n";
     }
-
-    setup_listener();
 }
 
 sub setup_listener {
+    my $interface = shift;
+    my $player = $bus->get_service($interface);
     my $obj = $player->get_object('/org/mpris/MediaPlayer2',
         'org.freedesktop.DBus.Properties');
     $obj->connect_to_signal('PropertiesChanged', \&handle_propchange);
-    print "Now listening…\n";
+    print "Now listening to $interface...\n";
 }
 
 sub lastfm {
@@ -432,8 +443,7 @@ dbus-scrobbler - scrobble from an MPRIS-compliant media player's D-Bus interface
 =head1 SYNOPSIS
 
   ./dbus-scrobbler
-  Found a running Banshee, connecting…
-  Now listening…
+  Now listening to org.mpris.MediaPlayer2.banshee…
   [2015-08-23 10:35:51] Detected track change.
   You need to visit:
   https://www.last.fm/api/auth/?api_key=dfab9b1c7357c55028c84b9a8fb68880&token=b4fb0bd84f55ce143885a31756cc859c
@@ -461,9 +471,9 @@ B<dbus-scrobbler>:
 
 =over 4
 
-=item * Looks on your user session's D-Bus for an existing Banshee process to listen to.
+=item * Looks on your user session's D-Bus for existing processes to listen to.
 
-If it doesn't find one then it waits for one to appear.
+=item * Wait for any new processes to appear.
 
 =item * Asks for authorization with Last.fm the first time this is necessary.
 
@@ -496,14 +506,13 @@ B<File::HomeDir::my_home()/.config/dbus-scrobbler/sessionkey> file.
 =head2 D-Bus Interaction
 
 B<dbus-scrobbler> initially connects to your user's session D-Bus and looks for
-the bus name B<org.mpris.Mediaplayer2.banshee>. As per the MPRIS specification,
+bus names B<org.mpris.Mediaplayer2.*>. As per the MPRIS specification,
 each media player should request a unique bus name which begins with
 B<org.mpris.MediaPlayer2>.
 
-If B<dbus-scrobbler> does not find any such bus name then it assumes that
-Banshee is not running yet. It connects to the
-B<org.freedesktop.DBus.NameOwnerChanged> signal and waits for a signal that
-indicates that B<org.mpris.Mediaplayer2.banshee> is now available.
+B<dbus-scrobbler> also connects to the
+B<org.freedesktop.DBus.NameOwnerChanged> signal to wait until a media player
+becomes available.
 
 Once available, the B</org/mpris/MediaPlayer2> object is used to connect to the
 B<org.freedesktop.DBus.Properties.PropertiesChanged> signal. This signal fires
@@ -541,13 +550,6 @@ API was stolen.
 Some of the most egregious shortcomings:
 
 =over 4
-
-=item * Hard-coded to support Banshee.
-
-Multiple media players support MPRIS, but I don't know enough about D-Bus yet
-to work out how to wait for them all to appear on the bus, so at the moment
-this just looks for Banshee. It should be very very simple to alter it to work
-with another player though.
 
 =item * Should run as a daemon.
 
