@@ -27,10 +27,10 @@ my $sk_savefile = my_home() . '/.config/dbus-scrobbler/sessionkey';
 my @_queue;
 
 # Using Net::LastFMAPI's creds at the moment because
-# http://www.last.fm/api/account/create isn't working right now.
+# https://www.last.fm/api/account/create isn't working right now.
 my $lastfm_api_key = 'dfab9b1c7357c55028c84b9a8fb68880';
 my $lastfm_secret  = 'd004c86dcfa8ef4c3977b04f558535f2';
-my $lastfm_url     = 'http://ws.audioscrobbler.com/2.0/';
+my $lastfm_url     = 'https://ws.audioscrobbler.com/2.0/';
 
 my $ua = new LWP::UserAgent(agent => "dbus-scrobbler/$VERSION");
 
@@ -232,7 +232,7 @@ sub lastfm_request_session {
     }
 
     print "You need to visit:\n";
-    print 'http://www.last.fm/api/auth/?api_key=' . $lastfm_api_key
+    print 'https://www.last.fm/api/auth/?api_key=' . $lastfm_api_key
         . '&token=' . $token . "\n";
     print "Press Enter when you have done so and authorized this app…";
     <STDIN>;
@@ -436,7 +436,7 @@ dbus-scrobbler - scrobble from an MPRIS-compliant media player's D-Bus interface
   Now listening…
   [2015-08-23 10:35:51] Detected track change.
   You need to visit:
-  http://www.last.fm/api/auth/?api_key=dfab9b1c7357c55028c84b9a8fb68880&token=b4fb0bd84f55ce143885a31756cc859c
+  https://www.last.fm/api/auth/?api_key=dfab9b1c7357c55028c84b9a8fb68880&token=b4fb0bd84f55ce143885a31756cc859c
   Press Enter when you have done so and authorized this app…
   [2015-08-23 10:36:18] Successfully updated nowplaying: Pet Shop Boys - Left to My Own Devices.
   [2015-08-23 10:36:18] Detected track change.
