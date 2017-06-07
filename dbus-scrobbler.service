@@ -1,0 +1,30 @@
+#
+# Example dbus-scrobbler systemd user service.
+#
+# Note that you need to have first run dbus-scrobbler on the command line and
+# gone through the steps that allow it to submit tracks to your last.fm
+# profile.
+#
+# To use it, copy this file to ~/.config/systemd/user/dbus-scrobbler.service
+# and run:
+#
+#     systemctl --user daemon-reload
+#     systemctl --user enable dbus-scrobbler
+#     systemctl --user start dbus-scrobbler
+#
+# This will make it start *automatically* whenever you login.
+# To follow what it's doing, you can do:
+#
+#     systemctl --user status dbus-scrobbler
+#     journalctl --user-unit dbus-scrobbler -f
+#
+
+[Service]
+Description=Scrobble tracks detected on MPRIS2
+Type=simple
+ExecStart=/home/pauli/bin/dbus-scrobbler
+Restart=on-failure
+RestartSec=15min
+
+[Install]
+WantedBy=default.target
