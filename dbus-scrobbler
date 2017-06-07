@@ -387,31 +387,37 @@ sub dequeue_scrobbles {
 
     my $now = strftime("%s", gmtime);
 
+    my $cur_track = $prev_update;
+    my $cur_start_time = $prev_update_time;
+
     while (@_queue) {
         my $scrobble = shift @_queue;
 
-        if (defined $prev_update) {
+        if (!(defined $cur_track and $cur_track eq $scrobble->{track})) {
+            $cur_start_time = $scrobble->{timestamp};
+            $cur_track = $scrobble->{track};
+        }
+
+        if ($now - $cur_start_time < 0.4*$scrobble->{duration}) {
+            $log->info('Track ' . $scrobble->{artist} . ' - '
+                . $scrobble->{track} . " played less than 40% of duration, so"
+                . " not scrobbling.");
+            next;
+        }
+
+        if (defined $prev_update and $prev_update eq $scrobble->{track}) {
             # How long ago was it?
             my $delta = $now - $prev_update_time;
 
-            if ($delta < 0.4*$scrobble->{duration}) {
-                $log->info('Track ' . $scrobble->{artist} . ' - '
-                    . $scrobble->{track} . " played less than 40% of duration, so"
-                    . " not scrobbling.");
+            if ($delta <= 600) {
+	        $log->info('Identical track ' . $scrobble->{artist} . ' - '
+                   . $scrobble->{track} . " played only $delta secs ago, so"
+                   . " not scrobbling.");
                 next;
             }
 
-	    if ($prev_update eq $scrobble->{track}) {
-		if ($delta <= 600) {
-		    $log->info('Identical track ' . $scrobble->{artist} . ' - '
-                        . $scrobble->{track} . " played only $delta secs ago, so"
-                        . " not scrobbling.");
-                    next;
-                }
-
-                $log->info("An identical track was played $delta secs ago but that's"
-                    . " long enough ago to allow a new scrobble.");
-            }
+            $log->info("An identical track was played $delta secs ago but that's"
+                . " long enough ago to allow a new scrobble.");
         }
 
         my $res = lastfm('track.scrobble', %{ $scrobble });
