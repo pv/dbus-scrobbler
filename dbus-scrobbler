@@ -15,6 +15,13 @@ use File::Slurp;
 use File::Path qw/make_path/;
 use File::Basename qw/dirname/;
 use File::HomeDir qw/my_home/;
+use Log::Any qw/$log/,
+    filter => sub {
+        my ($cat, $lvl, $msg) = @_;
+        my $timestamp = strftime("%F %T", localtime);
+        return "[$timestamp] $msg";
+    };
+use Log::Any::Adapter ('Stderr');
 use POSIX qw/strftime/;
 
 use Data::Dumper;
@@ -35,7 +42,7 @@ my $lastfm_url     = 'https://ws.audioscrobbler.com/2.0/';
 my $ua = new LWP::UserAgent(agent => "dbus-scrobbler/$VERSION");
 
 my $prev_update      = '';
-my $prev_update_time = 0;
+my $prev_update_time = strftime("%s", gmtime);
 
 my $bus = Net::DBus->session;
 my $player;
@@ -68,6 +75,7 @@ my $session_obj = $session->get_object('/org/freedesktop/DBus');
 $session_obj->connect_to_signal('NameOwnerChanged', \&handle_nameownerchanged);
 
 # Run
+$log->info("dbus-scrobbler started. Waiting for events...");
 my $reactor = Net::DBus::Reactor->main();
 $reactor->run;
 
@@ -110,10 +118,9 @@ sub handle_nameownerchanged {
     };
 
     if ($@) {
-        print "Doesn't look like that was a supported player: $@\n";
-        print Dumper @_;
+        $log->error("Doesn't look like that was a supported player: $@\n" . Dumper(@_));
     } else {
-        print "A new player $name seems to be running, connected.\n";
+        $log->info("A new player $name seems to be running, connected.");
     }
 }
 
@@ -123,7 +130,7 @@ sub setup_listener {
     my $obj = $player->get_object('/org/mpris/MediaPlayer2',
         'org.freedesktop.DBus.Properties');
     $obj->connect_to_signal('PropertiesChanged', \&handle_propchange);
-    print "Now listening to $interface...\n";
+    $log->info("Connected to $interface...");
 }
 
 sub lastfm {
@@ -167,9 +174,9 @@ sub lastfm {
 
     my $content = $res->decoded_content;
 
-    print "Last.fm contains faulty data for a piece of data you requested"
+    $log->info("Last.fm contains faulty data for a piece of data you requested"
     . " and is unable to return a useful reply. Will be treated as an"
-    . " empty reply." if ($content eq qq(""\n));
+    . " empty reply.") if ($content eq qq(""\n));
 
     my $decoded_json = sub { $content = decode_json($content); };
 
@@ -179,19 +186,19 @@ sub lastfm {
         if ($res->is_success) {
             # Successful HTTP request but there was some problem with it.
             if ($res->decoded_content =~ /Invalid session key/) {
-                print "Auth problem?\n";
+                $log->warning("Auth problem?");
             }
         }
 
         $content = Dumper($content);
 
-        print join("\n",
+        $log->warning(join("\n",
             "Something went wrong:",
             "HTTP status: " . $res->status_line,
             "",
             $content,
             "",
-        );
+        ));
     }
 
     return $content;
@@ -220,7 +227,7 @@ sub lastfm_get_session_key {
         my $key = lastfm_request_session();
 
         if (not defined $key) {
-            print "Failed to get a Last.fm session:\n$@";
+            $log->error("Failed to get a Last.fm session:\n$@");
             return undef;
         }
 
@@ -238,7 +245,7 @@ sub lastfm_request_session {
     if ($res =~ m{<token>(.+)</token>}) {
         $token = $1;
     } else {
-        print "Auth token not found: $res\n";
+        $log->error("Auth token not found: $res");
         return undef;
     }
 
@@ -293,7 +300,7 @@ sub handle_propchange {
         return;
     }
 
-    print '[' . strftime("%F %T", localtime) . "] Detected track change.\n";
+    $log->info("Detected track change.");
 
     my $metadata = $args->{Metadata};
 
@@ -302,8 +309,7 @@ sub handle_propchange {
 #    print Dumper($metadata), "\n";
 
     if (not exists $metadata->{'mpris:length'}) {
-        print '[' . strftime("%F %T", localtime)
-            . "] Track has no length so I can't scrobble it.\n";
+        $log->info("Track has no length so I can't scrobble it.");
         return;
     }
 
@@ -311,9 +317,8 @@ sub handle_propchange {
     $metadata->{length_secs} = int($metadata->{'mpris:length'} / 1_000_000);
 
     if ($metadata->{length_secs} <= 30) {
-        print '[' . strftime("%F %T", localtime)
-            . '] Track length ' . $metadata->{length_secs}
-            . "s <= 30 so not scrobbling.\n";
+        $log->info('] Track length ' . $metadata->{length_secs}
+            . "s <= 30 so not scrobbling.");
         return;
     }
 
@@ -321,16 +326,14 @@ sub handle_propchange {
 
     # Sanity check supplied values.
     if (not exists $metadata->{'xesam:artist'}) {
-        print '[' . strftime("%F %T", localtime)
-            . "] Artist(s) must be supplied!\n";
+        $log->info("Artist(s) must be supplied!");
         return;
     }
 
     $scrobble->{artist} = join(', ', @{ $metadata->{'xesam:artist'} });
 
     if (not exists $metadata->{'xesam:title'}) {
-        print '[' . strftime("%F %T", localtime)
-            . "] Track title must be supplied!\n";
+        $log->info("Track title must be supplied!");
         return;
     }
 
@@ -343,8 +346,7 @@ sub handle_propchange {
         if ($num =~ /^\d+/ and $num > 0) {
             $scrobble->{trackNumber} = $num;
         } else {
-            print '[' . strftime("%F %T", localtime)
-                . "] Track number must be a positive integer.\n";
+            $log->info("Track number must be a positive integer.");
         }
     }
 
@@ -359,9 +361,8 @@ sub handle_propchange {
     my $res = lastfm('track.updateNowPlaying', %{ $scrobble });
 
     if (exists $res->{nowplaying}) {
-        print '[' . strftime("%F %T", localtime)
-            . '] Successfully updated nowplaying: ' . $scrobble->{artist}
-            . ' - ' . $scrobble->{track} . ".\n";
+        $log->info('Successfully updated nowplaying: ' . $scrobble->{artist}
+            . ' - ' . $scrobble->{track} . ".");
     }
 
     # And now scrobble it as well.
@@ -389,34 +390,38 @@ sub dequeue_scrobbles {
     while (@_queue) {
         my $scrobble = shift @_queue;
 
-        if (defined $prev_update
-                and $prev_update eq $scrobble->{track}) {
-            # The previous track update had the same name as this one. How long ago
-            # was it?
+        if (defined $prev_update) {
+            # How long ago was it?
             my $delta = $now - $prev_update_time;
 
-            if ($delta <= 600) {
-                print '[' . strftime("%F %T", localtime)
-                    . '] Identical track ' . $scrobble->{artist} . ' - '
-                    . $scrobble->{track} . " played only $delta secs ago, so"
-                    . " not scrobbling.\n";
+            if ($delta < 0.4*$scrobble->{duration}) {
+                $log->info('Track ' . $scrobble->{artist} . ' - '
+                    . $scrobble->{track} . " played less than 40% of duration, so"
+                    . " not scrobbling.");
                 next;
             }
 
-            print '[' . strftime("%F %T", localtime)
-                . "] An identical track was played $delta secs ago but that's"
-                . " long enough ago to allow a new scrobble.\n";
+	    if ($prev_update eq $scrobble->{track}) {
+		if ($delta <= 600) {
+		    $log->info('Identical track ' . $scrobble->{artist} . ' - '
+                        . $scrobble->{track} . " played only $delta secs ago, so"
+                        . " not scrobbling.");
+                    next;
+                }
+
+                $log->info("An identical track was played $delta secs ago but that's"
+                    . " long enough ago to allow a new scrobble.");
+            }
         }
 
         my $res = lastfm('track.scrobble', %{ $scrobble });
 
         if (exists $res->{scrobbles}
                 and 1 == $res->{scrobbles}->{'@attr'}->{accepted}) {
-            print '[' . strftime("%F %T", localtime)
-            . "] Successfully scrobbled: " . $scrobble->{artist} . ' - '
-            . $scrobble->{track} . ".\n";
+            $log->info("Successfully scrobbled: " . $scrobble->{artist} . ' - '
+            . $scrobble->{track} . ".");
         } else {
-            print Dumper $res;
+            $log->warning(Dumper $res);
         }
 
         # Record the track name and the time of update so we can avoid sending it
