@@ -47,6 +47,8 @@ my $prev_update_time = strftime("%s", gmtime);
 my $bus = Net::DBus->session;
 my $player;
 
+my $prev_scrobble = '';
+
 sub connect_active_players {
     my $bus = shift;
 
@@ -356,13 +358,24 @@ sub handle_propchange {
     }
 
     $scrobble->{duration}  = $metadata->{'length_secs'};
+
+    my $new_scrobble = Dumper(%{ $scrobble });
+
     $scrobble->{timestamp} = $now;
 
-    my $res = lastfm('track.updateNowPlaying', %{ $scrobble });
+    if ($new_scrobble ne $prev_scrobble) {
+    	$prev_scrobble = $new_scrobble;
 
-    if (exists $res->{nowplaying}) {
-        $log->info('Successfully updated nowplaying: ' . $scrobble->{artist}
-            . ' - ' . $scrobble->{track} . ".");
+        my $res = lastfm('track.updateNowPlaying', %{ $scrobble });
+
+        if (exists $res->{nowplaying}) {
+	    $log->info('Successfully updated nowplaying: ' . $scrobble->{artist}
+                . ' - ' . $scrobble->{track} . ".");
+        }
+    }
+    else {
+        $log->info('Not updating nowplaying (same as previous): ' . $scrobble->{artist}
+                . ' - ' . $scrobble->{track} . ".");
     }
 
     # And now scrobble it as well.
