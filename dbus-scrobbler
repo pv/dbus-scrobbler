@@ -359,7 +359,7 @@ sub handle_propchange {
 
     $scrobble->{duration}  = $metadata->{'length_secs'};
 
-    my $new_scrobble = Dumper(%{ $scrobble });
+    my $new_scrobble = ';' . $scrobble->{artist} . ';' . $scrobble->{track} . ';' . $scrobble->{album} . ';' . $scrobble->{duration};
 
     $scrobble->{timestamp} = $now;
 
