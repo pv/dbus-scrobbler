@@ -300,6 +300,11 @@ sub handle_propchange {
         return;
     }
 
+    # Only care about events where playback starts
+    if ($args->{PlaybackStatus} ne "Playing") {
+        return
+    };
+
     my $metadata = $args->{Metadata};
 
     my $now = strftime("%s", gmtime);
@@ -369,10 +374,6 @@ sub handle_propchange {
                 . ' - ' . $scrobble->{track} . ".");
         }
     }
-    else {
-        $log->info('Not updating nowplaying (same as previous): ' . $scrobble->{artist}
-                . ' - ' . $scrobble->{track} . ".");
-    }
 
     # And now scrobble it as well.
     #
@@ -408,9 +409,9 @@ sub dequeue_scrobbles {
         }
 
         if ($now - $cur_start_time < 0.4*$scrobble->{duration}) {
-            $log->info('Track ' . $scrobble->{artist} . ' - '
-                . $scrobble->{track} . " played less than 40% of duration, so"
-                . " not scrobbling.");
+            #$log->info('Track ' . $scrobble->{artist} . ' - '
+            #    . $scrobble->{track} . " played less than 40% of duration, so"
+            #    . " not scrobbling.");
             next;
         }
 
